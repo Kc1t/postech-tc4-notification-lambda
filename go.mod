@@ -11,6 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/newrelic/go-agent/v3 v3.45.0
 	github.com/newrelic/go-agent/v3/integrations/nrlambda v1.2.7
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
 
 require (
