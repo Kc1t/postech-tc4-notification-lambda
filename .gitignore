@@ -1,0 +1,9 @@
+bin/
+*.zip
+coverage.out
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+.env
+.claude
