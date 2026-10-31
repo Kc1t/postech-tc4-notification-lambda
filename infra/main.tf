@@ -18,6 +18,7 @@ data "aws_sqs_queue" "notifications" {
 }
 
 # Idempotência: um item por message_id já notificado; o TTL limpa os antigos.
+# tfsec:ignore:aws-dynamodb-table-customer-key O Learner Lab não permite criar CMK; a tabela usa a chave gerenciada da AWS.
 resource "aws_dynamodb_table" "dedup" {
   name         = "${local.name}-dedup"
   billing_mode = "PAY_PER_REQUEST"
@@ -34,18 +35,24 @@ resource "aws_dynamodb_table" "dedup" {
   }
 
   point_in_time_recovery {
-    enabled = false
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
   }
 
   tags = local.tags
 }
 
+# tfsec:ignore:aws-cloudwatch-log-group-customer-key O Learner Lab não permite criar CMK; o log fica com a chave gerenciada da AWS.
 resource "aws_cloudwatch_log_group" "notifier" {
   name              = "/aws/lambda/${local.name}"
   retention_in_days = var.log_retention_days
   tags              = local.tags
 }
 
+# tfsec:ignore:aws-lambda-enable-tracing O trace distribuído é do New Relic (nrlambda + extension), que continua o trace do os-service; o X-Ray duplicaria o custo sem ligar os spans.
 resource "aws_lambda_function" "notifier" {
   function_name = local.name
   description   = "Notifica o cliente por e-mail a cada mudança de status da OS"
