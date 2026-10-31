@@ -7,3 +7,6 @@ coverage.out
 .terraform.lock.hcl
 .env
 .claude
+golangci-report.xml
+gosec-report.json
+.scannerwork/

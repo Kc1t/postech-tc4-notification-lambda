@@ -1,0 +1,192 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main, homolog]
+  push:
+    branches: [main, homolog]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TF_VERSION: 1.9.8
+  GOLANGCI_LINT_VERSION: v2.15.0
+  GOSEC_VERSION: v2.30.0
+  MIN_COVERAGE: 80
+
+jobs:
+  quality:
+    name: Lint, SAST e testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go.mod arrumado
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l ./cmd ./internal ./pkg)"
+
+      - run: go vet ./...
+
+      - name: golangci-lint (inclui gosec, errorlint, bodyclose, noctx)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=5m --output.text.path=stdout --output.checkstyle.path=golangci-report.xml
+
+      - name: gosec (relatório para o SonarQube)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@"${GOSEC_VERSION}"
+          gosec -quiet -fmt=sonarqube -out=gosec-report.json -no-fail ./...
+          gosec -quiet -severity=medium -confidence=medium ./...
+
+      # A idempotência (tabela de dedup) roda contra o DynamoDB do LocalStack; sem ele o teste é pulado.
+      - name: DynamoDB do LocalStack
+        run: |
+          docker run -d --name ls-ci -p 4566:4566 -e SERVICES=dynamodb localstack/localstack:3.8
+          for _ in $(seq 1 60); do curl -sf http://localhost:4566/_localstack/health | grep -q '"dynamodb": "\(available\|running\)"' && break; sleep 2; done
+
+      - name: Testes unitários com cobertura
+        env:
+          TEST_DYNAMODB_ENDPOINT: http://localhost:4566
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+        run: go test ./internal/... ./pkg/... -race -covermode=atomic -coverprofile=coverage.out
+
+      - name: Cobertura mínima de ${{ env.MIN_COVERAGE }}%
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%","",$3); print $3}')
+          echo "### Cobertura: ${total}%" >> "$GITHUB_STEP_SUMMARY"
+          awk -v t="$total" -v m="$MIN_COVERAGE" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' \
+            || { echo "::error::cobertura ${total}% abaixo de ${MIN_COVERAGE}%"; exit 1; }
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quality-reports
+          path: |
+            coverage.out
+            golangci-report.xml
+            gosec-report.json
+          retention-days: 7
+
+  sonarqube:
+    name: SonarQube (quality gate)
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: quality-reports
+
+      - name: Análise e quality gate
+        env:
+          SONAR_PROJECT_KEY: postech-tc4-notification-lambda
+        run: .github/scripts/sonar.sh
+
+  terraform:
+    name: Terraform (fmt, validate, tfsec)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+      - uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infra
+
+  # Só a main faz deploy (a fila notification-os-events existe só no ambiente do EKS) e só com
+  # AWS_DEPLOY_ENABLED=true: as credenciais do Learner Lab expiram a cada sessão.
+  deploy:
+    name: Deploy
+    needs: [quality, sonarqube, terraform]
+    if: github.event_name != 'pull_request' && github.ref_name == 'main' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Empacotar a function
+        run: make package
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=notification-lambda/prod.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION || 'us-east-1' }}"
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          TF_VAR_smtp_username: ${{ secrets.SMTP_USERNAME }}
+          TF_VAR_smtp_password: ${{ secrets.SMTP_PASSWORD }}
+          TF_VAR_smtp_from: ${{ vars.SMTP_FROM }}
+          TF_VAR_portal_url: ${{ vars.PORTAL_URL }}
+          TF_VAR_new_relic_account_id: ${{ vars.NEW_RELIC_ACCOUNT_ID }}
+          TF_VAR_new_relic_license_key: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
+        run: |
+          # Variável vazia no repositório não deve apagar o default do Terraform.
+          [ -n "$TF_VAR_smtp_from" ] || unset TF_VAR_smtp_from
+          [ -n "$TF_VAR_portal_url" ] || unset TF_VAR_portal_url
+          terraform apply -input=false -auto-approve -var-file=envs/prod.tfvars
+
+      # Lote vazio: exercita bootstrap, extensão do New Relic e handler sem mandar e-mail.
+      - name: Smoke test
+        working-directory: infra
+        run: |
+          fn=$(terraform output -raw function_name)
+          aws lambda invoke --function-name "$fn" --cli-binary-format raw-in-base64-out \
+            --payload '{"Records":[]}' out.json > meta.json
+          cat out.json
+          ! grep -q FunctionError meta.json || { cat meta.json; exit 1; }
+          grep -q batchItemFailures out.json
+          echo "### Notifier \`$fn\` no ar, lendo a fila notification-os-events" >> "$GITHUB_STEP_SUMMARY"
