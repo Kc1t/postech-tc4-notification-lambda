@@ -14,6 +14,9 @@ func TestRender_TodosOsStatus(t *testing.T) {
 		if !strings.Contains(m.Subject, "42") || !strings.HasPrefix(m.Text, "Olá, Ana!") || !strings.Contains(m.HTML, "OS #42") {
 			t.Errorf("%s: e-mail incompleto: %+v", status, m)
 		}
+		if !strings.Contains(m.HTML, "<title>"+specs[status].title+" · OS #42</title>") {
+			t.Errorf("%s: HTML sem <title>", status)
+		}
 	}
 	if Supports("awaiting_budget") || !Supports("cancelled") {
 		t.Fatal("Supports")
