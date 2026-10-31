@@ -19,7 +19,17 @@ import (
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level(env("LOG_LEVEL", "info"))}))
+	// O texto do log vai em "message", o atributo que o New Relic usa como texto da linha (e que
+	// os alertas por log consultam), em vez do "msg" padrão do slog.
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level(env("LOG_LEVEL", "info")),
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.MessageKey {
+				a.Key = "message"
+			}
+			return a
+		},
+	}))
 	slog.SetDefault(log)
 
 	awsCfg, err := config.LoadDefaultConfig(context.Background())
