@@ -39,6 +39,33 @@ make lint
 make package                                         # notifier.zip (arm64, provided.al2023)
 ```
 
+## Testes
+
+| Pacote | Cobertura | O que cobre |
+|---|---|---|
+| `internal/notifier` | 95,2% | envio e filtro por status, mensagem duplicada que não reenvia, falha parcial do lote (`ReportBatchItemFailures`), invólucro do SNS e o **teste de contrato**: os exemplos do JSON Schema de `os.ServiceOrderStatusChanged` passam pelo handler e geram o assunto esperado |
+| `internal/idempotency` | 100% | reserva condicional, duplicata, liberação da reserva, TTL e erro da API; contra o DynamoDB do LocalStack quando `TEST_DYNAMODB_ENDPOINT` existe |
+| `internal/templates` | 87,8% | um e-mail por status, link do Mercado Pago, motivo do cancelamento e formatação de dinheiro |
+| `internal/mail` | 86,6% | montagem MIME e envio contra um SMTP falso, com os erros de cada etapa |
+| `internal/mask` | 100% | mascaramento de e-mail e CPF |
+| `pkg/contracts` | 93,5% | envelope e JSON Schemas, cópia idêntica à dos serviços (`make contracts` no e2e confere) |
+| **Total** | **92,1%** | |
+
+## CI/CD
+
+Pipeline próprio em [`.github/workflows/ci.yml`](.github/workflows/ci.yml). A `main` é protegida: só recebe PR, com os três primeiros jobs obrigatórios.
+
+| Job | O que faz |
+|---|---|
+| Lint, SAST e testes | `go mod tidy` limpo, `gofmt`, `go vet`, golangci-lint, gosec, DynamoDB do LocalStack, testes com race, **cobertura mínima de 80%** e govulncheck |
+| SonarQube | SonarQube Community num container do job, com quality gate próprio (cobertura ≥ 80%, duplicação ≤ 3%, nota A em confiabilidade, segurança e manutenibilidade), cobertura e relatórios do golangci-lint e do gosec ([`.github/scripts/sonar.sh`](.github/scripts/sonar.sh)) |
+| Terraform | `fmt -check`, `validate` e tfsec (exceções justificadas no `main.tf`: Learner Lab sem CMK, trace pelo New Relic em vez do X-Ray) |
+| Deploy (push na `main`) | `make package`, `terraform apply` e smoke test com um lote vazio (`{"Records":[]}`), que exercita o bootstrap, a extension do New Relic e o handler sem mandar e-mail |
+
+O deploy só roda com `AWS_DEPLOY_ENABLED=true`, porque as credenciais do Learner Lab expiram a cada sessão. Secrets: `AWS_*`, `TF_STATE_BUCKET`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `NEW_RELIC_LICENSE_KEY`; variáveis: `AWS_REGION`, `SMTP_FROM`, `PORTAL_URL` e `NEW_RELIC_ACCOUNT_ID` (todas gravadas pelo `scripts/setup-github.sh` do infra-k8s).
+
+**Evidência de cobertura:** 92,1% nos testes do CI e 89,2% no SonarQube, com o quality gate aprovado (0 bugs, 0 vulnerabilidades, 0 code smells, 0% de duplicação). Cada execução publica a cobertura no resumo do job.
+
 ## Deploy
 `infra/` (Terraform): function com a LabRole, layer do New Relic, event source mapping na fila `notification-os-events` (criada no repositório de infra junto com o tópico e a DLQ) e a tabela de deduplicação com TTL.
 
