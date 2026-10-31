@@ -47,20 +47,38 @@ func New(sender Sender, store Store, portalURL string, log *slog.Logger) *Handle
 var errPermanent = errors.New("mensagem inválida")
 
 // Handle processa o lote e devolve as mensagens que falharam (ReportBatchItemFailures): só elas
-// voltam para a fila, o resto do lote é confirmado.
+// voltam para a fila, o resto do lote é confirmado. A invocação devolve nil ao runtime, então a
+// falha é marcada na transação (NoticeError) para aparecer na taxa de erro e no Errors Inbox.
 func (h *Handler) Handle(ctx context.Context, ev events.SQSEvent) (events.SQSEventResponse, error) {
 	acceptTrace(ctx, ev)
 	var resp events.SQSEventResponse
 	for _, r := range ev.Records {
 		if err := h.process(ctx, r); err != nil {
 			resp.BatchItemFailures = append(resp.BatchItemFailures, events.SQSBatchItemFailure{ItemIdentifier: r.MessageId})
+			if txn := newrelic.FromContext(ctx); txn != nil {
+				txn.NoticeError(err)
+			}
 		}
 	}
 	return resp, nil
 }
 
+// withTrace põe trace.id, span.id e entity.guid nos logs (logs in context do New Relic). Depois
+// do acceptTrace o trace.id é o mesmo da requisição que mudou a OS no os-service.
+func withTrace(ctx context.Context, l *slog.Logger) *slog.Logger {
+	txn := newrelic.FromContext(ctx)
+	if txn == nil {
+		return l
+	}
+	md := txn.GetLinkingMetadata()
+	if md.TraceID == "" {
+		return l
+	}
+	return l.With("trace.id", md.TraceID, "span.id", md.SpanID, "entity.guid", md.EntityGUID)
+}
+
 func (h *Handler) process(ctx context.Context, r events.SQSMessage) error {
-	log := h.log.With("sqs_message_id", r.MessageId)
+	log := withTrace(ctx, h.log).With("sqs_message_id", r.MessageId)
 	env, err := contracts.Parse([]byte(unwrapSNS(r.Body)))
 	if err != nil {
 		log.Error("notification_invalid_message", "error", err)

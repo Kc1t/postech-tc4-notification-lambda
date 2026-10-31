@@ -18,7 +18,7 @@ flowchart LR
 - Um e-mail por status: aberta, em diagnóstico, orçamento pronto (com o valor), aguardando pagamento (com o link do Mercado Pago), em execução, finalizada, entregue e cancelada (com o motivo). `awaiting_budget` é etapa interna e não gera e-mail.
 - **Idempotente:** reserva o `message_id` no DynamoDB com escrita condicional antes de enviar. Se o envio falha, libera a reserva para a próxima tentativa enviar.
 - **Falha parcial de lote:** devolve só as mensagens que falharam (`ReportBatchItemFailures`). Mensagem inválida vai para a DLQ depois de 5 tentativas.
-- **Observabilidade:** `nrlambda` com a layer `NewRelicLambdaExtensionARM64` e `batch_size = 1`. Cada invocação aceita os headers W3C/New Relic que viajam como MessageAttributes, e o trace continua o do os-service. Evento customizado `NotificationSent` para o dashboard.
+- **Observabilidade:** `nrlambda` com a layer `NewRelicLambdaExtensionARM64` e `batch_size = 1`. Cada invocação aceita os headers W3C/New Relic que viajam como MessageAttributes, e o trace continua o do os-service; os logs levam `trace.id`, `span.id` e `entity.guid` desse trace. Uma mensagem que falha volta para a fila (`ReportBatchItemFailures`) e marca erro na transação (`NoticeError`), então entra na taxa de erro e no Errors Inbox. Evento customizado `NotificationSent` para o dashboard.
 - **LGPD:** e-mail e CPF aparecem mascarados nos logs (`a***@example.com`, `***.***.***-25`).
 
 ## Configuração
@@ -43,13 +43,13 @@ make package                                         # notifier.zip (arm64, prov
 
 | Pacote | Cobertura | O que cobre |
 |---|---|---|
-| `internal/notifier` | 95,2% | envio e filtro por status, mensagem duplicada que não reenvia, falha parcial do lote (`ReportBatchItemFailures`), invólucro do SNS e o **teste de contrato**: os exemplos do JSON Schema de `os.ServiceOrderStatusChanged` passam pelo handler e geram o assunto esperado |
+| `internal/notifier` | 94,4% | envio e filtro por status, mensagem duplicada que não reenvia, falha parcial do lote (`ReportBatchItemFailures`), invólucro do SNS e o **teste de contrato**: os exemplos do JSON Schema de `os.ServiceOrderStatusChanged` passam pelo handler e geram o assunto esperado |
 | `internal/idempotency` | 100% | reserva condicional, duplicata, liberação da reserva, TTL e erro da API; contra o DynamoDB do LocalStack quando `TEST_DYNAMODB_ENDPOINT` existe |
 | `internal/templates` | 87,8% | um e-mail por status, link do Mercado Pago, motivo do cancelamento e formatação de dinheiro |
 | `internal/mail` | 86,6% | montagem MIME e envio contra um SMTP falso, com os erros de cada etapa |
 | `internal/mask` | 100% | mascaramento de e-mail e CPF |
 | `pkg/contracts` | 93,5% | envelope e JSON Schemas, cópia idêntica à dos serviços (`make contracts` no e2e confere) |
-| **Total** | **92,1%** | |
+| **Total** | **92,0%** | |
 
 ## CI/CD
 
@@ -64,7 +64,7 @@ Pipeline próprio em [`.github/workflows/ci.yml`](.github/workflows/ci.yml). A `
 
 O deploy só roda com `AWS_DEPLOY_ENABLED=true`, porque as credenciais do Learner Lab expiram a cada sessão. Secrets: `AWS_*`, `TF_STATE_BUCKET`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `NEW_RELIC_LICENSE_KEY`; variáveis: `AWS_REGION`, `SMTP_FROM`, `PORTAL_URL` e `NEW_RELIC_ACCOUNT_ID` (todas gravadas pelo `scripts/setup-github.sh` do infra-k8s).
 
-**Evidência de cobertura:** 92,1% nos testes do CI e 89,2% no SonarQube, com o quality gate aprovado (0 bugs, 0 vulnerabilidades, 0 code smells, 0% de duplicação). Cada execução publica a cobertura no resumo do job.
+**Evidência de cobertura:** 92,0% nos testes do CI e 89,0% no SonarQube, com o quality gate aprovado (0 bugs, 0 vulnerabilidades, 0 code smells, 0% de duplicação). Cada execução publica a cobertura no resumo do job.
 
 ## Deploy
 `infra/` (Terraform): function com a LabRole, layer do New Relic, event source mapping na fila `notification-os-events` (criada no repositório de infra junto com o tópico e a DLQ) e a tabela de deduplicação com TTL.

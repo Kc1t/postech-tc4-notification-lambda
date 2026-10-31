@@ -1,9 +1,12 @@
 package notifier
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/Kc1t/postech-tc4-notification-lambda/internal/templates"
@@ -92,6 +95,31 @@ func TestHandle_EnviaEFiltra(t *testing.T) {
 	}
 	if len(snd.sent) != 1 || snd.sent[0].to != "ana@example.com" || snd.sent[0].subject != "Pagamento da OS #42" {
 		t.Fatalf("enviados: %+v", snd.sent)
+	}
+}
+
+func TestHandle_FalhaMarcaErroELogaComTrace(t *testing.T) {
+	var buf bytes.Buffer
+	snd := &fakeSender{err: errors.New("smtp fora")}
+	st := &fakeStore{claimed: map[string]bool{}}
+	h := New(snd, st, "https://portal.test", slog.New(slog.NewJSONHandler(&buf, nil)))
+	app, err := newrelic.NewApplication(newrelic.ConfigAppName("t"), newrelic.ConfigLicense(strings.Repeat("0", 40)),
+		newrelic.ConfigDistributedTracerEnabled(true), newrelic.ConfigEnabled(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	txn := app.StartTransaction("lambda")
+	defer txn.End()
+	ctx := newrelic.NewContext(context.Background(), txn)
+
+	resp, err := h.Handle(ctx, events.SQSEvent{Records: []events.SQSMessage{
+		record(t, "1", contracts.EvtServiceOrderStatusChanged, status("finished", "ana@example.com")),
+	}})
+	if err != nil || len(resp.BatchItemFailures) != 1 {
+		t.Fatalf("%+v %v", resp, err)
+	}
+	if !strings.Contains(buf.String(), `"trace.id"`) || !strings.Contains(buf.String(), "notification_send_failed") {
+		t.Fatalf("log sem trace.id: %s", buf.String())
 	}
 }
 
