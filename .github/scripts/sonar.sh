@@ -14,6 +14,10 @@
 set -euo pipefail
 
 PROJECT_KEY=${SONAR_PROJECT_KEY:?defina SONAR_PROJECT_KEY}
+
+# Com -quiet, o gosec não grava o arquivo quando não acha nada; relatório vazio é válido.
+[[ -f gosec-report.json ]] || echo '{"rules":[],"issues":[]}' > gosec-report.json
+[[ -f coverage.out ]] || { echo "coverage.out não encontrado: rode os testes antes" >&2; exit 1; }
 SONAR_IMAGE=${SONAR_IMAGE:-sonarqube:community}
 SCANNER_IMAGE=${SCANNER_IMAGE:-sonarsource/sonar-scanner-cli:latest}
 SONAR_PORT=${SONAR_PORT:-9000}
