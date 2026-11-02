@@ -16,6 +16,7 @@ concurrency:
 
 env:
   TF_VERSION: 1.9.8
+  TFSEC_VERSION: v1.28.14
   GOLANGCI_LINT_VERSION: v2.15.0
   GOSEC_VERSION: v2.30.0
   MIN_COVERAGE: 80
@@ -124,9 +125,13 @@ jobs:
       - run: terraform init -backend=false -input=false
       - run: terraform validate
 
+      # Versão fixa e token do job: sem token, o download do tfsec pela API do GitHub esbarra no
+      # limite por IP do runner (60 requisições por hora) e derruba o job.
       - uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: infra
+          version: ${{ env.TFSEC_VERSION }}
+          github_token: ${{ github.token }}
 
   # Só a main faz deploy (a fila notification-os-events existe só no ambiente do EKS) e só com
   # AWS_DEPLOY_ENABLED=true: as credenciais do Learner Lab expiram a cada sessão.
