@@ -21,7 +21,7 @@ Tech Challenge Fase 4, FIAP Pós Tech SOAT. Go 1.26 em AWS Lambda (`provided.al2
 | Empacotamento e infraestrutura | zip com o binário `bootstrap` (`make package`) e Terraform da function, do event source mapping e da tabela de deduplicação em [`infra/`](infra/). Não há Dockerfile nem manifesto Kubernetes: a function roda no runtime `provided.al2023` |
 | Banco próprio | tabela DynamoDB `postech-tc4-prod-notifier-dedup` ([Banco e modelo de dados](#banco-e-modelo-de-dados)) |
 | Pipeline de CI/CD | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
-| Evidência de cobertura | **92,0%** no `go test` e **89,0%** no SonarQube, publicados no resumo de cada [execução do CI](https://github.com/Kc1t/postech-tc4-notification-lambda/actions/workflows/ci.yml) ([Testes](#testes-e-evidência-de-cobertura)) |
+| Evidência de cobertura | **92,0%** no `go test` e **92,7%** no SonarQube, publicados no resumo de cada [execução do CI](https://github.com/Kc1t/postech-tc4-notification-lambda/actions/workflows/ci.yml) ([Testes](#testes-e-evidência-de-cobertura)) |
 | Documentação da arquitetura do serviço | este README, de [Responsabilidades](#responsabilidades) a [Decisões e limitações](#decisões-e-limitações) |
 | Contrato | a function não tem API HTTP: o contrato é a mensagem consumida ([Mensagem consumida](#mensagem-consumida-fila-notification-os-events)), com JSON Schema em [`pkg/contracts/schemas`](pkg/contracts/schemas/os.ServiceOrderStatusChanged.schema.json) e no [AsyncAPI do os-service](https://github.com/Kc1t/postech-tc4-os-service/blob/main/docs/asyncapi/asyncapi.yaml) |
 
@@ -226,9 +226,9 @@ Para ver os e-mails de verdade, use o ambiente e2e do [postech-tc4-infra-k8s/loc
 | `pkg/contracts` | 93,5% | envelope e JSON Schemas, cópia idêntica à dos serviços (`make contracts` no e2e confere) |
 | **Total (`internal/` e `pkg/`)** | **92,0%** | |
 
-O número é o do CI (`go test ./internal/... ./pkg/...` com o DynamoDB do LocalStack). O `make cover` mede `./...`, inclusive o `cmd/notifier` sem testes, e por isso dá um total menor.
+O número é o do CI (`go test ./internal/... ./pkg/...` com o DynamoDB do LocalStack). O `make cover` mede os mesmos pacotes; sem `TEST_DYNAMODB_ENDPOINT` apontando para um LocalStack, o teste da idempotência é pulado e o total local fica em 91,3%.
 
-**Evidência de cobertura:** **92,0%** no `go test` e **89,0%** no SonarQube, com o quality gate aprovado (0 bugs, 0 vulnerabilidades, 0 code smells, 0% de duplicação). Cada execução do [CI](https://github.com/Kc1t/postech-tc4-notification-lambda/actions/workflows/ci.yml) publica no resumo do job a cobertura e a tabela do SonarQube; o pipeline reprova abaixo de 80%.
+**Evidência de cobertura:** **92,0%** no `go test` e **92,7%** no SonarQube, com o quality gate aprovado (0 bugs, 0 vulnerabilidades, 0 code smells, 0% de duplicação). Cada execução do [CI](https://github.com/Kc1t/postech-tc4-notification-lambda/actions/workflows/ci.yml) publica no resumo do job a cobertura e a tabela do SonarQube; o pipeline reprova abaixo de 80%.
 
 ## CI/CD e deploy
 
